@@ -23,6 +23,7 @@ import logging
 from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Optional, Dict, List, Any, Tuple
+from ai_brain import process_command_with_ai
 
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
@@ -909,7 +910,7 @@ def launch_windows_app(query: str) -> Dict[str, Any]:
         kind, payload = candidates[match_name]
         try:
             if kind == "app":
-                subprocess.Popen(f'explorer.exe shell:AppsFolder\\{payload}', shell=True)
+                subprocess.Popen(["explorer.exe", f"shell:AppsFolder\\{payload}"])
                 method = "AppID" if match_score >= 99 else f"AppID (fuzzy match, {match_score:.0f}%)"
                 log.info(f"Launched via {method}: {match_name}")
                 return {"method": method, "target": match_name, "appid": payload}
@@ -1098,9 +1099,15 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
+_host = os.getenv("JARVIS_HOST", "127.0.0.1")
+_port = os.getenv("JARVIS_PORT", "8000")
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=[
+        "http://127.0.0.1:8000",
+        "http://localhost:8000",
+        f"http://{_host}:{_port}"
+    ],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -1259,15 +1266,38 @@ async def launch_endpoint(payload: CommandPayload):
         category, reply = chitchat
         return {"success": True, "chat": True, "category": category, "message": reply}
 
+    def is_deterministic(c: str) -> bool:
+        cl = c.lower()
+        if any(cl.startswith(v) for v in ("open ", "launch ", "run ", "start ", "play ", "take a ", "what time", "lock ")):
+            return True
+        if cl in ("shutdown", "restart", "sleep", "lock", "hibernate", "logoff", "log off", "confirm", "yes"):
+            return True
+        if "recycle bin" in cl or "trash" in cl:
+            return True
+        return False
+
     try:
         # Offload to a thread: app-launching itself is fast, but GitHub API
         # calls involve real network I/O and must not block the event loop.
-        res = await asyncio.to_thread(launch_app, cmd)
-        results = res.get("results") or []
-        msg = "; ".join(_format_result_message(r) for r in results) or "Done."
-        if res.get("errors"):
-            msg += f" (partial failure: {' '.join(res['errors'])})"
-        return {"success": True, "message": msg, "details": res}
+        if is_deterministic(cmd):
+            res = await asyncio.to_thread(launch_app, cmd)
+            results = res.get("results") or []
+            msg = "; ".join(_format_result_message(r) for r in results) or "Done."
+            if res.get("errors"):
+                msg += f" (partial failure: {' '.join(res['errors'])})"
+            return {"success": True, "message": msg, "details": res}
+        else:
+            try:
+                ai_res = await asyncio.to_thread(process_command_with_ai, cmd, launch_app)
+                return ai_res
+            except Exception as e:
+                log.warning(f"AI Brain failed, falling back to rule engine: {e}")
+                res = await asyncio.to_thread(launch_app, cmd)
+                results = res.get("results") or []
+                msg = "; ".join(_format_result_message(r) for r in results) or "Done."
+                if res.get("errors"):
+                    msg += f" (partial failure: {' '.join(res['errors'])})"
+                return {"success": True, "message": msg, "details": res}
     except Exception as err:
         err_msg = str(err)
         raise HTTPException(status_code=422, detail=err_msg)

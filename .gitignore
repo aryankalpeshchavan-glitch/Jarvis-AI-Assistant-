@@ -33,6 +33,7 @@ jarvis_err.log
 
 # Jarvis local config (contains your GitHub username, personal — don't commit)
 jarvis_config.json
+.env
 
 # IDE & OS
 .idea/
