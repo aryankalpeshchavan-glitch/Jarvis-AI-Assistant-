@@ -63,16 +63,17 @@ def test_show_hide_state(mock_dependencies):
     importlib.reload(companion)
     
     mock_window = MagicMock()
-    mock_window.hidden = True
     companion.window = mock_window
+    companion.is_ui_visible = True
+    
+    companion.toggle_window()
+    mock_window.hide.assert_called_once()
+    assert companion.is_ui_visible is False
     
     companion.toggle_window()
     mock_window.show.assert_called_once()
     mock_window.restore.assert_called_once()
-    
-    mock_window.hidden = False
-    companion.toggle_window()
-    mock_window.hide.assert_called_once()
+    assert companion.is_ui_visible is True
 
 def test_tray_construction(mock_dependencies):
     mock_dependencies["get_last_error"].return_value = 0
@@ -115,12 +116,14 @@ def test_on_closing_prevents_destroy_unless_quitting(mock_dependencies):
     
     mock_window = MagicMock()
     companion.window = mock_window
+    companion.is_ui_visible = True
     
     companion.is_quitting = False
     result = companion.on_closing()
     
     assert result is False # Prevents destroy
     mock_window.hide.assert_called_once()
+    assert companion.is_ui_visible is False
     
     companion.is_quitting = True
     result2 = companion.on_closing()

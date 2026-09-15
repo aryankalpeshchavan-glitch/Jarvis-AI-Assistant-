@@ -31,24 +31,38 @@ if ctypes.windll.kernel32.GetLastError() == 183:  # ERROR_ALREADY_EXISTS
 window = None
 tray_icon = None
 is_quitting = False
+is_ui_visible = True
 
 # ─── 3. Tray Actions & Hotkey ─────────────────────────────────────────────────
 def toggle_window():
+    global is_ui_visible
+    log.info("HOTKEY CALLBACK ENTERED")
     if window:
-        if window.hidden:
-            window.show()
-            window.restore()
-        else:
-            window.hide()
+        try:
+            if is_ui_visible:
+                log.info("Attempting to hide()...")
+                window.hide()
+                is_ui_visible = False
+            else:
+                log.info("Attempting to show() and restore()...")
+                window.show()
+                window.restore()
+                is_ui_visible = True
+        except Exception as e:
+            log.error(f"Exception in toggle_window: {e}", exc_info=True)
 
 def show_jarvis(icon=None, item=None):
+    global is_ui_visible
     if window:
         window.show()
         window.restore()
+        is_ui_visible = True
 
 def hide_jarvis(icon=None, item=None):
+    global is_ui_visible
     if window:
         window.hide()
+        is_ui_visible = False
 
 def quit_jarvis(icon=None, item=None):
     global is_quitting
@@ -61,12 +75,13 @@ def quit_jarvis(icon=None, item=None):
     # The application will naturally exit once webview.start() completes.
 
 def on_closing():
-    global is_quitting
+    global is_quitting, is_ui_visible
     if is_quitting:
         return True  # Allow the window to be destroyed
     
     # Otherwise, just hide the window to keep Jarvis in the background
     window.hide()
+    is_ui_visible = False
     return False
 
 # ─── 4. Background Services ───────────────────────────────────────────────────
