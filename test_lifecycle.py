@@ -128,3 +128,6 @@ def test_on_closing_prevents_destroy_unless_quitting(mock_dependencies):
     companion.is_quitting = True
     result2 = companion.on_closing()
     assert result2 is True # Allows destroy
+
+if __name__ == '__main__':
+    pytest.main(["-q", __file__])

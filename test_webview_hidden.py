@@ -19,6 +19,9 @@ def on_start(window):
     print("After show, hidden state:", getattr(window, 'hidden', 'NO_SUCH_ATTRIBUTE'))
     window.destroy()
 
-if __name__ == '__main__':
+def test_webview_hidden_suite():
     window = webview.create_window('Test', html='<h1>Test</h1>')
     webview.start(on_start, window)
+
+if __name__ == '__main__':
+    test_webview_hidden_suite()
