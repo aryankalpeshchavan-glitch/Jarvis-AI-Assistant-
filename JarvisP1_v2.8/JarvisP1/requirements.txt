@@ -1,7 +1,0 @@
-fastapi==0.115.0
-uvicorn[standard]==0.30.6
-pyttsx3==2.90
-requests==2.32.3
-python-multipart==0.0.9
-pyinstaller==6.10.0
-rapidfuzz==3.10.1
