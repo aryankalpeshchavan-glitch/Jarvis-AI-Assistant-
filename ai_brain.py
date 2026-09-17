@@ -38,8 +38,9 @@ def process_command_with_ai(command: str, fallback_func: Callable = None) -> Dic
             temperature=0.3
         )
 
+        model_name = os.environ.get("GEMINI_MODEL", "gemini-3.6-flash")
         response = client.models.generate_content(
-            model='gemini-2.5-flash',
+            model=model_name,
             contents=command,
             config=config,
         )
@@ -78,7 +79,7 @@ def process_command_with_ai(command: str, fallback_func: Callable = None) -> Dic
             )
             
             final_response = client.models.generate_content(
-                model='gemini-2.5-flash',
+                model=model_name,
                 contents=summary_prompt,
                 config=types.GenerateContentConfig(system_instruction=system_instruction, temperature=0.3)
             )

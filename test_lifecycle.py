@@ -14,6 +14,8 @@ import importlib
 def mock_dependencies():
     with patch("ctypes.windll.kernel32.CreateMutexW") as mock_mutex, \
          patch("ctypes.windll.kernel32.GetLastError") as mock_getlasterror, \
+         patch("ctypes.windll.kernel32.WaitForSingleObject") as mock_wait_for_single_object, \
+         patch("ctypes.windll.kernel32.CloseHandle") as mock_close_handle, \
          patch("ctypes.windll.kernel32.ReleaseMutex") as mock_release, \
          patch("pystray.Icon") as mock_icon, \
          patch("webview.create_window") as mock_create_window, \
@@ -26,6 +28,7 @@ def mock_dependencies():
         yield {
             "mutex": mock_mutex,
             "get_last_error": mock_getlasterror,
+            "wait_for_single_object": mock_wait_for_single_object,
             "release": mock_release,
             "icon": mock_icon,
             "create_window": mock_create_window,
@@ -35,14 +38,14 @@ def mock_dependencies():
         }
 
 def test_single_instance_lock(mock_dependencies):
-    # If GetLastError returns 0, it means we got the lock.
-    mock_dependencies["get_last_error"].return_value = 0
+    mock_dependencies["wait_for_single_object"].return_value = 0
     import companion
     importlib.reload(companion)
-    mock_dependencies["mutex"].assert_called_with(None, False, "Jarvis_Companion_Mutex_2.0")
+    mock_dependencies["mutex"].assert_called_with(None, False, "JarvisP1_Companion_Mutex")
+    mock_dependencies["wait_for_single_object"].assert_called_with(mock_dependencies["mutex"].return_value, 0)
 
 def test_second_instance_exits(mock_dependencies):
-    mock_dependencies["get_last_error"].return_value = 183 # ERROR_ALREADY_EXISTS
+    mock_dependencies["wait_for_single_object"].return_value = 0x102 # WAIT_TIMEOUT
     with pytest.raises(SystemExit) as exc_info:
         import companion
         importlib.reload(companion)

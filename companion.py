@@ -20,12 +20,29 @@ log = logging.getLogger("JarvisCompanion")
 
 # ─── 1. Single Instance Mutex ──────────────────────────────────────────────────
 # Prevents multiple copies of Jarvis from running simultaneously.
-MUTEX_NAME = "Jarvis_Companion_Mutex_2.0"
+MUTEX_NAME = "JarvisP1_Companion_Mutex"
 mutex = ctypes.windll.kernel32.CreateMutexW(None, False, MUTEX_NAME)
-if ctypes.windll.kernel32.GetLastError() == 183:  # ERROR_ALREADY_EXISTS
-    print("Jarvis is already running. Exiting.")
-    # Here we could optionally use FindWindow to bring the existing instance to the front.
+
+WAIT_OBJECT_0 = 0
+WAIT_ABANDONED = 0x80
+WAIT_TIMEOUT = 0x102
+WAIT_FAILED = 0xFFFFFFFF
+
+result = ctypes.windll.kernel32.WaitForSingleObject(mutex, 0)
+if result == WAIT_FAILED:
+    log.error(f"Failed to check mutex '{MUTEX_NAME}' (WAIT_FAILED). Exiting.")
+    if mutex:
+        ctypes.windll.kernel32.CloseHandle(mutex)
+    sys.exit(1)
+elif result == WAIT_TIMEOUT:
+    log.error(f"Jarvis is already running (Mutex '{MUTEX_NAME}' is locked). Exiting.")
+    if mutex:
+        ctypes.windll.kernel32.CloseHandle(mutex)
     sys.exit(0)
+elif result == WAIT_ABANDONED:
+    log.warning(f"Acquired abandoned lock for {MUTEX_NAME} (previous instance crashed).")
+else:
+    log.info(f"Acquired single-instance lock: {MUTEX_NAME}")
 
 # ─── 2. State & Lifecycle variables ───────────────────────────────────────────
 window = None
@@ -78,7 +95,7 @@ def on_closing():
     global is_quitting, is_ui_visible
     if is_quitting:
         return True  # Allow the window to be destroyed
-    
+
     # Otherwise, just hide the window to keep Jarvis in the background
     window.hide()
     is_ui_visible = False
@@ -115,7 +132,7 @@ def start_tray():
 if __name__ == "__main__":
     # Start the backend server
     threading.Thread(target=start_fastapi, daemon=True).start()
-    
+
     # Wait for the backend to become healthy
     log.info("Waiting for FastAPI server to initialize...")
     server_ready = False
@@ -128,10 +145,12 @@ if __name__ == "__main__":
         except Exception:
             pass
         time.sleep(1)
-        
+
     if not server_ready:
         log.error("FastAPI server failed to start within 20 seconds. Exiting.")
-        ctypes.windll.kernel32.ReleaseMutex(mutex)
+        if mutex:
+            ctypes.windll.kernel32.ReleaseMutex(mutex)
+            ctypes.windll.kernel32.CloseHandle(mutex)
         sys.exit(1)
 
     log.info("Server is online.")
@@ -148,18 +167,66 @@ if __name__ == "__main__":
 
     # Create and start the webview companion
     window = webview.create_window(
-        'J.A.R.V.I.S AI Assistant Engine', 
+        'J.A.R.V.I.S AI Assistant Engine',
         'http://127.0.0.1:8000',
         width=1080, height=720,
         text_select=False
     )
+    def on_minimized():
+        global is_ui_visible
+        is_ui_visible = False
+
+    def on_restored():
+        global is_ui_visible
+        is_ui_visible = True
+
+    def on_hidden():
+        global is_ui_visible
+        is_ui_visible = False
+
+    def on_shown():
+        global is_ui_visible
+        is_ui_visible = True
+
+    try:
+        window.events.minimized += on_minimized
+        log.info("[DEBUG] Bound window 'minimized' event.")
+    except AttributeError as e:
+        log.warning(f"[DEBUG] Window 'minimized' event unsupported: {e}")
+
+    try:
+        window.events.restored += on_restored
+        log.info("[DEBUG] Bound window 'restored' event.")
+    except AttributeError as e:
+        log.warning(f"[DEBUG] Window 'restored' event unsupported: {e}")
+
+    try:
+        window.events.hidden += on_hidden
+        log.info("[DEBUG] Bound window 'hidden' event.")
+    except AttributeError as e:
+        log.warning(f"[DEBUG] Window 'hidden' event unsupported: {e}")
+
+    try:
+        window.events.shown += on_shown
+        log.info("[DEBUG] Bound window 'shown' event.")
+    except AttributeError as e:
+        log.warning(f"[DEBUG] Window 'shown' event unsupported: {e}")
+
     window.events.closing += on_closing
 
+    def on_webview_start(*args, **kwargs):
+        pass
+
     log.info("Launching Companion UI...")
-    webview.start()
+    try:
+        webview.start(on_webview_start, window, private_mode=False, gui='edgechromium')
+    except Exception as e:
+        log.error(f"webview.start exception: {e}", exc_info=True)
 
     # Cleanup after window is destroyed (during quit)
     log.info("Cleaning up...")
     keyboard.unhook_all()
-    ctypes.windll.kernel32.ReleaseMutex(mutex)
+    if mutex:
+        ctypes.windll.kernel32.ReleaseMutex(mutex)
+        ctypes.windll.kernel32.CloseHandle(mutex)
     log.info("Jarvis lifecycle complete.")
