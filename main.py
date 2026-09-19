@@ -108,11 +108,16 @@ def _init_tts():
 
 def speak(text: str):
     """Speak text asynchronously without blocking HTTP response handlers."""
+    import response_parser
+    clean_text = response_parser.sanitize_for_tts(text)
+    if not clean_text:
+        return
+
     def _run_tts():
         with tts_lock:
             try:
                 if tts_engine:
-                    tts_engine.say(text)
+                    tts_engine.say(clean_text)
                     tts_engine.runAndWait()
             except Exception as e:
                 log.warning(f"TTS speech warning: {e}")
@@ -1141,6 +1146,10 @@ class AutostartPayload(BaseModel):
     enable: bool
 
 
+class EditorPayload(BaseModel):
+    code: str
+    language: str
+    editor: str  # "notepad" or "vscode"
 @app.get("/", response_class=FileResponse)
 async def serve_index():
     index_file = BASE_DIR / "index.html"
@@ -1310,6 +1319,49 @@ async def speak_endpoint(payload: TTSPayload):
         speak(text)
         return {"success": True, "text": text}
     return {"success": False, "detail": "Empty text"}
+
+
+@app.post("/open_editor")
+async def open_editor_endpoint(payload: EditorPayload):
+    import subprocess
+    import os
+
+    # Save the file to Documents/Jarvis/GeneratedCode
+    # Determine file extension based on language
+    lang_to_ext = {
+        "python": "py", "javascript": "js", "html": "html", "css": "css",
+        "java": "java", "c": "c", "cpp": "cpp", "csharp": "cs",
+        "json": "json", "xml": "xml", "bash": "sh", "sql": "sql",
+        "typescript": "ts", "go": "go", "rust": "rs"
+    }
+    ext = lang_to_ext.get(payload.language.lower(), "txt")
+
+    doc_path = Path(os.environ.get("USERPROFILE", "C:\\")) / "Documents" / "Jarvis" / "GeneratedCode"
+    doc_path.mkdir(parents=True, exist_ok=True)
+
+    file_path = doc_path / f"generated_code.{ext}"
+
+    try:
+        with open(file_path, "w", encoding="utf-8") as f:
+            f.write(payload.code)
+    except Exception as e:
+        log.error(f"Failed to write code to {file_path}: {e}")
+        raise HTTPException(status_code=500, detail="Failed to save code to disk")
+
+    try:
+        if payload.editor.lower() == "vscode":
+            # Attempt to launch VS Code
+            try:
+                subprocess.Popen(["code", str(file_path)], shell=True)
+            except Exception:
+                # Fallback to notepad
+                subprocess.Popen(["notepad.exe", str(file_path)])
+        else:
+            subprocess.Popen(["notepad.exe", str(file_path)])
+        return {"success": True, "message": f"Opened in {payload.editor}"}
+    except Exception as e:
+        log.error(f"Failed to launch editor: {e}")
+        raise HTTPException(status_code=500, detail="Failed to open editor")
 
 
 @app.get("/apps")

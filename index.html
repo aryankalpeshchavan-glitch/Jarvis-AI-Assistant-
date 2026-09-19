@@ -125,6 +125,25 @@
   .modal-input:focus{border-color:var(--gold);}
   .modal-actions{display:flex;gap:10px;justify-content:flex-end;}
 
+  /* ---- Code Panel ---- */
+  .code-panel-container{display:none;position:fixed;top:50%;left:50%;transform:translate(-50%, -50%);
+    z-index:11;width:min(90vw,700px);max-height:60vh;background:var(--panel);
+    border:1px solid var(--panel-border);border-radius:12px;backdrop-filter:blur(10px);
+    flex-direction:column;overflow:hidden;}
+  .code-panel-container.open{display:flex;}
+  .code-header{display:flex;justify-content:space-between;align-items:center;
+    padding:8px 16px;background:rgba(255,180,84,0.1);border-bottom:1px solid var(--panel-border);}
+  .code-lang{font-size:11px;color:var(--gold-bright);text-transform:uppercase;letter-spacing:1px;font-family:var(--font-head);}
+  .code-actions{display:flex;gap:8px;}
+  .code-btn{background:rgba(255,180,84,0.1);border:1px solid var(--panel-border);
+    color:var(--text-dim);border-radius:4px;padding:4px 8px;font-size:10px;cursor:pointer;
+    font-family:var(--font-mono);transition:.15s;}
+  .code-btn:hover{background:rgba(255,180,84,0.25);color:var(--gold-bright);border-color:var(--gold);}
+  .code-content{padding:16px;overflow-y:auto;font-family:var(--font-mono);font-size:12px;
+    color:var(--gold-bright);white-space:pre-wrap;word-break:break-word;flex:1;}
+  .code-close{position:absolute;top:-10px;right:-10px;background:var(--red);color:#fff;
+    width:24px;height:24px;border-radius:50%;border:none;cursor:pointer;font-weight:bold;z-index:12;}
+
   @media (max-width:640px){
     .drawer{width:82vw;}
   }
@@ -179,6 +198,10 @@
 <div class="center-stage">
   <div class="status-line" id="status-line">SYSTEMS ONLINE</div>
   <div class="status-sub" id="status-sub">Say "Hey Jarvis" or type a command below</div>
+</div>
+
+<div class="code-panel-container" id="code-panel">
+  <!-- Dynamic content will be injected here -->
 </div>
 
 <div class="console">
@@ -289,15 +312,28 @@ if('speechSynthesis' in window){
   pickVoice();
   window.speechSynthesis.onvoiceschanged = pickVoice;
 }
+function sanitizeForTTS(text){
+  if(!text) return "";
+  let t = text.replace(/```[\s\S]*?```/g, "");
+  t = t.replace(/\bJ\.A\.R\.V\.I\.S\b\.?/gi, "Jarvis");
+  t = t.replace(/J\.A\.R\.V\.I\.S\.?/gi, "Jarvis");
+  t = t.replace(/\*\*(.*?)\*\*/g, "$1");
+  t = t.replace(/\*(.*?)\*/g, "$1");
+  t = t.replace(/`(.*?)`/g, "$1");
+  return t.trim();
+}
+
 function speakText(text){
   if(!('speechSynthesis' in window) || !text) return;
+  const cleanText = sanitizeForTTS(text);
+  if(!cleanText) return;
   try{
-    window.speechSynthesis.cancel(); // don't queue/overlap with a prior response
-    const utter = new SpeechSynthesisUtterance(text);
+    window.speechSynthesis.cancel();
+    const utter = new SpeechSynthesisUtterance(cleanText);
     utter.rate = 1.02; utter.pitch = 1.0; utter.volume = 1.0;
     if(preferredVoice) utter.voice = preferredVoice;
     window.speechSynthesis.speak(utter);
-  }catch(e){ /* non-fatal — written response still shown regardless */ }
+  }catch(e){}
 }
 
 /* ============ Backend health check ============ */
@@ -347,13 +383,21 @@ async function executeCommand(cmdStr){
       method:"POST",
       headers:{"Content-Type":"application/json"},
       body: JSON.stringify({command: cmdStr}),
-      signal: AbortSignal.timeout(10000),
+      signal: AbortSignal.timeout(15000),
     });
     const data = await response.json();
     if(response.ok && data.success){
       logLine(`Jarvis: ${data.message}`);
       setState("idle", "SYSTEMS ONLINE", data.message);
       speakText(data.message);
+
+      // Handle Code Blocks if present
+      if(data.code_blocks && data.code_blocks.length > 0){
+        renderCodePanels(data.code_blocks);
+      } else {
+        document.getElementById("code-panel").classList.remove("open");
+      }
+
     } else {
       const errMsg = data.detail || "I couldn't do that.";
       logLine(`Jarvis: ${errMsg}`);
@@ -365,6 +409,78 @@ async function executeCommand(cmdStr){
     logLine(`Error: ${offlineMsg}`);
     setState("idle", "SYSTEMS ONLINE", offlineMsg);
     speakText(offlineMsg);
+  }
+}
+
+function renderCodePanels(blocks){
+  const container = document.getElementById("code-panel");
+  container.innerHTML = "";
+
+  // Create a close button for the entire container
+  const closeBtn = document.createElement("button");
+  closeBtn.className = "code-close";
+  closeBtn.textContent = "×";
+  closeBtn.onclick = () => container.classList.remove("open");
+  container.appendChild(closeBtn);
+
+  blocks.forEach((b, i) => {
+    const header = document.createElement("div");
+    header.className = "code-header";
+
+    const lang = document.createElement("div");
+    lang.className = "code-lang";
+    lang.textContent = b.language || "code";
+
+    const actions = document.createElement("div");
+    actions.className = "code-actions";
+
+    const copyBtn = document.createElement("button");
+    copyBtn.className = "code-btn";
+    copyBtn.textContent = "Copy";
+    copyBtn.onclick = () => {
+      navigator.clipboard.writeText(b.code);
+      copyBtn.textContent = "Copied!";
+      setTimeout(()=> copyBtn.textContent = "Copy", 2000);
+    };
+
+    const noteBtn = document.createElement("button");
+    noteBtn.className = "code-btn";
+    noteBtn.textContent = "Notepad";
+    noteBtn.onclick = () => openEditor(b.code, b.language, "notepad");
+
+    const vsBtn = document.createElement("button");
+    vsBtn.className = "code-btn";
+    vsBtn.textContent = "VS Code";
+    vsBtn.onclick = () => openEditor(b.code, b.language, "vscode");
+
+    actions.appendChild(copyBtn);
+    actions.appendChild(noteBtn);
+    actions.appendChild(vsBtn);
+
+    header.appendChild(lang);
+    header.appendChild(actions);
+
+    const content = document.createElement("div");
+    content.className = "code-content";
+    content.textContent = b.code;
+
+    container.appendChild(header);
+    container.appendChild(content);
+  });
+
+  container.classList.add("open");
+}
+
+async function openEditor(code, language, editor){
+  try {
+    await fetch(`${API_URL}/open_editor`, {
+      method:"POST",
+      headers:{"Content-Type":"application/json"},
+      body: JSON.stringify({code, language, editor}),
+      signal: AbortSignal.timeout(5000),
+    });
+  } catch(e) {
+    logLine("Failed to open editor.");
   }
 }
 

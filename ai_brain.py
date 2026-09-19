@@ -83,10 +83,13 @@ def process_command_with_ai(command: str, fallback_func: Callable = None) -> Dic
                 contents=summary_prompt,
                 config=types.GenerateContentConfig(system_instruction=system_instruction, temperature=0.3)
             )
+            import response_parser
+            parsed = response_parser.parse_response(final_response.text if final_response.text else "Executed successfully.")
                 
             return {
                 "success": True,
-                "message": final_response.text if final_response.text else "Executed successfully.",
+                "message": parsed["explanation"],
+                "code_blocks": parsed["code_blocks"],
                 "details": {
                     "results": results,
                     "errors": errors,
@@ -95,11 +98,14 @@ def process_command_with_ai(command: str, fallback_func: Callable = None) -> Dic
             }
         
         # If no function was called, it's a conversational response
+        import response_parser
+        parsed = response_parser.parse_response(response.text)
         return {
             "success": True,
             "chat": True,
             "category": "ai_response",
-            "message": response.text
+            "message": parsed["explanation"],
+            "code_blocks": parsed["code_blocks"]
         }
 
     except Exception as e:
