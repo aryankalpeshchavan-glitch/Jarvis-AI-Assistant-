@@ -37,15 +37,15 @@ def test_engine_suite():
           == ["open notepad", "open calculator", "launch spotify"])
     check("single command unchanged",
           main.split_commands("open chrome") == ["open chrome"])
-    
+
     print("\n=== fuzzy_best_match (typo tolerance) ===")
     apps = ["ghost of tsushima", "spotify", "google chrome", "visual studio code"]
     match, score = main.fuzzy_best_match("ghost of tsunami", apps, threshold=70)
     check("typo'd game name resolves via fuzzy match", match == "ghost of tsushima", f"got {match!r} score={score:.1f}")
-    
+
     match2, score2 = main.fuzzy_best_match("xyzqqqnonsense123", apps, threshold=70)
     check("pure garbage does NOT fuzzy-match anything", match2 is None, f"got {match2!r} score={score2:.1f}")
-    
+
     print("\n=== classify_chitchat ===")
     check('"hello" is a greeting', main.classify_chitchat("hello") is not None)
     check('"hey jarvis" alone is a greeting', main.classify_chitchat("hey jarvis") is not None)
@@ -56,12 +56,12 @@ def test_engine_suite():
     check('"open spotify" is NOT chitchat', main.classify_chitchat("open spotify") is None)
     check('"open hi-res photo editor" is NOT chitchat (long sentence)',
           main.classify_chitchat("open hi res photo editor please now") is None)
-    
+
     print("\n=== GitHub intent detection ===")
     check('"open my top github repo" detected', main.is_github_intent("my top github repo"))
     check('"open github" alone is NOT the special intent (should just open github.com)',
           not main.is_github_intent("github"))
-    
+
     print("\n=== resolve_website ===")
     check("exact match: google", main.resolve_website("google") == "https://www.google.com")
     check("typo tolerance: gogle -> google", main.resolve_website("gogle") == "https://www.google.com")
@@ -74,7 +74,7 @@ def test_engine_suite():
           main.resolve_website("x") == "https://www.x.com")
     check("REGRESSION: 'x' as a whole word inside a sentence still matches",
           main.resolve_website("open x") == "https://www.x.com")
-    
+
     print("\n=== launch_windows_app fuzzy + graceful failure (simulated app cache) ===")
     main.INSTALLED_APPS_CACHE = {
         "ghost of tsushima": "SteamApp.12345",
@@ -82,7 +82,7 @@ def test_engine_suite():
         "spotify music": "SpotifyAppId",
     }
     main.SHORTCUTS_CACHE = {}
-    
+
     # Can't actually subprocess.Popen on Linux with a Windows AppID meaningfully,
     # but we can still verify the MATCHING logic picks the right candidate before
     # it attempts to launch, by checking it doesn't raise "not found".
@@ -96,7 +96,7 @@ def test_engine_suite():
         # that's expected in this sandbox; what matters is it didn't raise the
         # "couldn't find" RuntimeError, i.e. matching worked before launching failed.
         check("fuzzy game-name match found (not a 'not found' error) — matching succeeded, launch OS call expectedly unavailable on Linux sandbox", True)
-    
+
     try:
         main.launch_windows_app("totally made up app that does not exist 12345")
         check("garbage app raises graceful 'not found' error", False, "did not raise")
@@ -104,7 +104,7 @@ def test_engine_suite():
         check("garbage app raises graceful 'not found' error", "couldn't find" in str(e).lower())
     except Exception as e:
         check("garbage app raises graceful 'not found' error", False, f"raised wrong exception type: {e}")
-    
+
     print("\n=== Special folder resolution ===")
     check("'downloads' resolves to shell:Downloads", main.resolve_special_folder("downloads") == "shell:Downloads")
     check("'downloads folder' also resolves (trailing word stripped)",
@@ -112,7 +112,7 @@ def test_engine_suite():
     check("'desktop' resolves to shell:Desktop", main.resolve_special_folder("desktop") == "shell:Desktop")
     check("'d drive' resolves to D:\\\\", main.resolve_special_folder("d drive") == "D:\\")
     check("random garbage does not resolve as a folder", main.resolve_special_folder("kjashdkjashd") is None)
-    
+
     print("\n=== Steam game fuzzy matching (simulated library) ===")
     main.STEAM_GAMES_CACHE = {"ghost of tsushima": "2215430", "elden ring": "1245620"}
     main.INSTALLED_APPS_CACHE = {}
@@ -125,7 +125,7 @@ def test_engine_suite():
         check("typo'd Steam game name resolves via fuzzy match", match == "ghost of tsushima", f"got {match!r}")
     finally:
         main.platform.system = _real_platform_system2
-    
+
     print("\n=== System commands: safety gating on destructive actions ===")
     main._PENDING_CONFIRMATION.clear()
     try:
@@ -134,12 +134,12 @@ def test_engine_suite():
     except RuntimeError as e:
         check("shutdown WITHOUT confirmation raises (asks for confirm, doesn't execute)",
               "confirm" in str(e).lower(), str(e))
-    
+
     main._PENDING_CONFIRMATION.clear()  # the shutdown test above left a pending confirmation — clear it
                                          # first so this test starts from a clean slate
     check("bare 'yes' with nothing pending is NOT treated as a system command",
           main.resolve_system_command("yes") is None)
-    
+
     _real_popen = main.subprocess.Popen
     main.subprocess.Popen = lambda *a, **kw: None  # this sandbox has no rundll32.exe — stub it out
     try:
@@ -147,7 +147,7 @@ def test_engine_suite():
               main.resolve_system_command("lock") is not None)
     finally:
         main.subprocess.Popen = _real_popen
-    
+
     print("\n=== Chitchat/close-command conflict regression ===")
     check("'quit' alone is still chitchat (farewell)", main.classify_chitchat("quit") is None or True)
     # The important guarantee: 'quit spotify' must NOT be swallowed as chitchat —
@@ -156,12 +156,12 @@ def test_engine_suite():
           main.classify_chitchat("quit spotify") is None)
     check("'shutdown' alone is NOT classified as chitchat (it's a real command now)",
           main.classify_chitchat("shutdown") is None)
-    
+
     print("\n=== Utility commands ===")
     check("'what time is it' resolves with a spoken time", main.resolve_utility_command("what time is it") is not None)
     check("'what's the date' resolves with a spoken date", main.resolve_utility_command("what's the date") is not None)
     check("garbage does not match a utility command", main.resolve_utility_command("askjdhaksjdh") is None)
-    
+
     print(f"\n=== RESULTS: {PASS} passed, {FAIL} failed ===")
     assert FAIL == 0, f"{FAIL} tests failed"
 
