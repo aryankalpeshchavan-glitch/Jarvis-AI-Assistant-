@@ -1,10 +1,14 @@
 import os
 import json
 import asyncio
+import logging
+import time
 from typing import Dict, Any, Callable
 from dotenv import load_dotenv
 
 load_dotenv()
+
+log = logging.getLogger("jarvis.ai_brain")
 
 try:
     from google import genai
@@ -12,11 +16,16 @@ try:
 except ImportError:
     genai = None
 
-def process_command_with_ai(command: str, fallback_func: Callable = None) -> Dict[str, Any]:
-    """
-    Process a natural language command using Gemini and the Tool Registry.
-    """
-    import tools
+from ai_provider import GenerateContentProvider, InteractionsProvider, AIProvider
+from response_types import AssistantResponse, CodeBlock
+
+_provider_instance = None
+
+def get_provider() -> "AIProvider":
+    global _provider_instance
+    if _provider_instance is not None and not os.environ.get("PYTEST_CURRENT_TEST"):
+        return _provider_instance
+
     if not genai:
         raise RuntimeError("google-genai package not installed.")
 
@@ -24,89 +33,55 @@ def process_command_with_ai(command: str, fallback_func: Callable = None) -> Dic
     if not api_key or api_key == "mock_key_for_testing":
         raise RuntimeError("GEMINI_API_KEY not configured or is a mock key.")
 
+    client = genai.Client(api_key=api_key)
+    model_name = os.environ.get("GEMINI_MODEL", "gemini-3.6-flash")
+
+    # Based on our benchmarks, the Interactions API throws 503/Validation errors
+    # intermittently for structured outputs/tools, so GenerateContent is preferred
+    # for stability in the current vNEXT build.
+    if os.environ.get("USE_INTERACTIONS_API") == "true":
+        _provider_instance = InteractionsProvider(client, model_name)
+    else:
+        _provider_instance = GenerateContentProvider(client, model_name)
+
+    return _provider_instance
+
+def clear_ai_context():
+    provider = get_provider()
+    provider.clear_context()
+
+def process_command_with_ai(command: str, fallback_func: Callable = None) -> Dict[str, Any]:
+    """
+    Process a natural language command using Gemini and the Tool Registry.
+    """
+    provider = get_provider()
+
+    system_instruction = (
+        "You are J.A.R.V.I.S., an AI desktop companion. You can chat with the user and answer questions. "
+        "If the user asks you to perform PC actions (like opening apps, searching the web, system controls), "
+        "USE THE PROVIDED TOOLS. You can call multiple tools in sequence if needed. Keep conversational responses concise. "
+        "If returning code, always use Markdown code blocks. For code, spoken_text should only be a short summary."
+    )
+
     try:
-        client = genai.Client(api_key=api_key)
-        
-        # Load structured tool declarations from our Tool Engine
-        tool = types.Tool(function_declarations=tools.registry.schemas)
-        
-        system_instruction = "You are J.A.R.V.I.S., an AI desktop companion. You can chat with the user and answer questions. If the user asks you to perform PC actions (like opening apps, searching the web, system controls), USE THE PROVIDED TOOLS. You can call multiple tools in sequence if needed. Keep conversational responses concise and do not include raw JSON in your final answer."
+        t0 = time.perf_counter()
+        response: AssistantResponse = provider.process_command(command, system_instruction)
+        t1 = time.perf_counter()
 
-        config = types.GenerateContentConfig(
-            tools=[tool],
-            system_instruction=system_instruction,
-            temperature=0.3
-        )
+        log.info(f"Gemini responded in {t1-t0:.1f}s using {provider.model_name}")
 
-        model_name = os.environ.get("GEMINI_MODEL", "gemini-3.6-flash")
-        response = client.models.generate_content(
-            model=model_name,
-            contents=command,
-            config=config,
-        )
-
-        # Check if the model decided to call a function
-        if response.function_calls:
-            results = []
-            errors = []
-            for function_call in response.function_calls:
-                tool_name = function_call.name
-                args = function_call.args
-                
-                # Extract arguments safely
-                kwargs = {}
-                if isinstance(args, dict):
-                    kwargs = args
-                elif hasattr(args, "items"):
-                    kwargs = dict(args)
-                elif hasattr(args, "__dict__"):
-                    kwargs = {k: v for k, v in args.__dict__.items() if not k.startswith("_")}
-                
-                # Execute tool
-                res = tools.registry.execute(tool_name, kwargs)
-                if not res.get("success"):
-                    errors.append(res.get("message"))
-                results.append(res)
-                            
-            if errors:
-                raise RuntimeError(" ".join(str(e) for e in errors))
-            
-            # Turn 2: Generate natural language summary of the results
-            summary_prompt = (
-                f"The user commanded: '{command}'.\n\n"
-                f"You executed tools with these results: {json.dumps(results)}\n\n"
-                f"Please provide a very short, natural language summary (1-2 sentences) of what you just did for the user. Do not expose JSON or raw tool names."
-            )
-            
-            final_response = client.models.generate_content(
-                model=model_name,
-                contents=summary_prompt,
-                config=types.GenerateContentConfig(system_instruction=system_instruction, temperature=0.3)
-            )
-            import response_parser
-            parsed = response_parser.parse_response(final_response.text if final_response.text else "Executed successfully.")
-                
-            return {
-                "success": True,
-                "message": parsed["explanation"],
-                "code_blocks": parsed["code_blocks"],
-                "details": {
-                    "results": results,
-                    "errors": errors,
-                    "target": ", ".join(r.get("tool", "") for r in results if r)
-                }
-            }
-        
-        # If no function was called, it's a conversational response
-        import response_parser
-        parsed = response_parser.parse_response(response.text)
         return {
-            "success": True,
-            "chat": True,
+            "success": response.success,
+            "chat": response.intent == "conversation",
             "category": "ai_response",
-            "message": parsed["explanation"],
-            "code_blocks": parsed["code_blocks"]
+            "message": response.message,
+            "spoken_text": response.spoken_text or response.message,
+            "code_blocks": [b.model_dump() for b in response.code_blocks],
+            "details": {
+                "results": response.actions_taken,
+                "errors": [response.error] if response.error else [],
+                "target": ", ".join(r.get("tool", "") for r in response.actions_taken if r)
+            }
         }
-
     except Exception as e:
         raise RuntimeError(f"AI Brain failed: {str(e)}")

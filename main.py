@@ -23,7 +23,6 @@ import logging
 from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Optional, Dict, List, Any, Tuple
-from ai_brain import process_command_with_ai
 
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
@@ -1297,6 +1296,7 @@ async def launch_endpoint(payload: CommandPayload):
             return {"success": True, "message": msg, "details": res}
         else:
             try:
+                from ai_brain import process_command_with_ai
                 ai_res = await asyncio.to_thread(process_command_with_ai, cmd, launch_app)
                 return ai_res
             except Exception as e:
@@ -1310,6 +1310,16 @@ async def launch_endpoint(payload: CommandPayload):
     except Exception as err:
         err_msg = str(err)
         raise HTTPException(status_code=422, detail=err_msg)
+
+@app.post("/clear_context")
+async def clear_context_endpoint():
+    from ai_brain import clear_ai_context
+    try:
+        clear_ai_context()
+        return {"success": True, "message": "Context cleared"}
+    except Exception as e:
+        log.error(f"Failed to clear context: {e}")
+        raise HTTPException(status_code=500, detail="Failed to clear context")
 
 
 @app.post("/speak")
@@ -1325,9 +1335,9 @@ async def speak_endpoint(payload: TTSPayload):
 async def open_editor_endpoint(payload: EditorPayload):
     import subprocess
     import os
+    import shutil
+    import time
 
-    # Save the file to Documents/Jarvis/GeneratedCode
-    # Determine file extension based on language
     lang_to_ext = {
         "python": "py", "javascript": "js", "html": "html", "css": "css",
         "java": "java", "c": "c", "cpp": "cpp", "csharp": "cs",
@@ -1339,7 +1349,8 @@ async def open_editor_endpoint(payload: EditorPayload):
     doc_path = Path(os.environ.get("USERPROFILE", "C:\\")) / "Documents" / "Jarvis" / "GeneratedCode"
     doc_path.mkdir(parents=True, exist_ok=True)
 
-    file_path = doc_path / f"generated_code.{ext}"
+    timestamp = int(time.time())
+    file_path = doc_path / f"generated_code_{timestamp}.{ext}"
 
     try:
         with open(file_path, "w", encoding="utf-8") as f:
@@ -1350,14 +1361,13 @@ async def open_editor_endpoint(payload: EditorPayload):
 
     try:
         if payload.editor.lower() == "vscode":
-            # Attempt to launch VS Code
-            try:
-                subprocess.Popen(["code", str(file_path)], shell=True)
-            except Exception:
-                # Fallback to notepad
-                subprocess.Popen(["notepad.exe", str(file_path)])
+            code_bin = shutil.which("code") or shutil.which("code.cmd")
+            if code_bin:
+                subprocess.Popen([code_bin, str(file_path)], shell=False)
+            else:
+                subprocess.Popen(["notepad.exe", str(file_path)], shell=False)
         else:
-            subprocess.Popen(["notepad.exe", str(file_path)])
+            subprocess.Popen(["notepad.exe", str(file_path)], shell=False)
         return {"success": True, "message": f"Opened in {payload.editor}"}
     except Exception as e:
         log.error(f"Failed to launch editor: {e}")
