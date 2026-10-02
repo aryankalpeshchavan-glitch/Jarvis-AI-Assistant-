@@ -42,3 +42,4 @@ jarvis_config.json
 *.swo
 .DS_Store
 Thumbs.db
+models/vosk/*

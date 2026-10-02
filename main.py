@@ -26,7 +26,7 @@ from typing import Optional, Dict, List, Any, Tuple
 
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 import uvicorn
@@ -182,9 +182,9 @@ def enable_autostart():
         # Packaged .exe: launch itself directly.
         launch_line = f'start "" "{sys.executable}"'
     else:
-        # Running from source: reuse startup.bat, which starts the server
-        # and opens the UI window the same way a manual double-click would.
-        launch_line = f'call "{BASE_DIR / "startup.bat"}"'
+        # Running from source: reuse startup_with_widget.bat, which starts the server
+        # and the widget the same way a manual double-click would.
+        launch_line = f'call "{BASE_DIR / "startup_with_widget.bat"}"'
 
     content = f'@echo off\r\ncd /d "{BASE_DIR}"\r\n{launch_line}\r\n'
     try:
@@ -965,13 +965,7 @@ def launch_windows_app(query: str) -> Dict[str, Any]:
         log.info(f"Launched via named-folder search: {found_folder}")
         return open_folder(str(found_folder))
 
-    # Nothing matched with any confidence — fail gracefully instead of
-    # blindly shelling out (which used to trigger a raw Windows error popup).
-    raise RuntimeError(
-        f"I couldn't find “{query}” on this PC — it's not in your installed apps, "
-        f"Start Menu/Desktop shortcuts, Steam library, or a website I recognize. "
-        f"If it is installed, try the exact name from the Start Menu."
-    )
+    raise RuntimeError(f"Couldn't find {query}.")
 
 
 def launch_native_app(query: str) -> Dict[str, Any]:
@@ -983,19 +977,13 @@ def launch_native_app(query: str) -> Dict[str, Any]:
             subprocess.run(["open", "-a", query], check=True, capture_output=True, timeout=5)
             return {"method": "macOS open", "target": query}
         except Exception:
-            raise RuntimeError(
-                f"I couldn't find an app called “{query}” on this Mac. "
-                f"App-name matching on macOS is more limited than Windows right now."
-            )
+            raise RuntimeError(f"Couldn't find {query}.")
     else:
         try:
             subprocess.run(["xdg-open", query], check=True, capture_output=True, timeout=5)
             return {"method": "Linux xdg-open", "target": query}
         except Exception:
-            raise RuntimeError(
-                f"I couldn't find an app called “{query}” on this system. "
-                f"App-name matching on Linux is more limited than Windows right now."
-            )
+            raise RuntimeError(f"Couldn't find {query}.")
 
 
 def resolve_single_command(raw: str) -> Dict[str, Any]:
@@ -1120,6 +1108,23 @@ app.add_middleware(
 app.mount("/static", StaticFiles(directory=str(BASE_DIR)), name="static")
 
 
+def normalize_app_command(c: str) -> str:
+    cl = c.lower()
+    verbs = ("open ", "launch ", "start ", "run ")
+    verb = next((v for v in verbs if cl.startswith(v)), None)
+    if not verb:
+        return c
+    target = cl[len(verb):].strip()
+    if not target:
+        return c
+    candidates = list(INSTALLED_APPS_CACHE.keys()) + list(SHORTCUTS_CACHE.keys()) + list(STEAM_GAMES_CACHE.keys())
+    match, score = fuzzy_best_match(target, candidates, threshold=70)
+    if match:
+        # Preserve original casing of the verb, append the matched app
+        return c[:len(verb)] + match
+    return c
+
+
 @app.get("/favicon.ico")
 async def favicon():
     icon_file = BASE_DIR / "assets" / "jarvis_icon.ico"
@@ -1181,6 +1186,39 @@ async def health_check():
         "fuzzy_engine": "rapidfuzz" if HAVE_RAPIDFUZZ else "difflib",
         "timestamp": time.time(),
     }
+
+
+# ── Widget State Tracker (polled by jarvis_widget.py) ───────────────────────
+# Updated by the /stream endpoint as commands flow through the AI pipeline.
+_WIDGET_STATE = {"state": "idle"}
+
+def _set_widget_state(state: str):
+    """Update the global state readable by the companion widget."""
+    _WIDGET_STATE["state"] = state
+
+
+@app.get("/status")
+async def status_endpoint():
+    """Compact reactor-state endpoint polled by the desktop companion widget.
+    Returns one of: idle | listening | thinking | executing | speaking | error"""
+    return {"state": _WIDGET_STATE["state"], "online": True}
+
+
+@app.post("/focus")
+async def focus_endpoint():
+    """Bring the JARVIS window into focus (called by the widget when user clicks reactor)."""
+    # The companion window is managed by companion.py; this is a no-op stub here
+    # that prevents 404 errors when the widget tries to focus an already-open window.
+    return {"success": True}
+
+
+@app.post("/toggle_mic")
+async def toggle_mic_endpoint():
+    """Toggle the native Vosk microphone.
+    The actual STT state is managed in companion.py via JarvisApi.
+    This endpoint exists so the widget context menu can request a mic toggle;
+    the bridge to the actual STT instance is via companion.py's JS evaluate_js."""
+    return {"success": True, "note": "Mic toggle is handled by the companion window"}
 
 
 @app.post("/reindex")
@@ -1265,6 +1303,9 @@ async def launch_endpoint(payload: CommandPayload):
     if not cmd:
         raise HTTPException(status_code=400, detail="Command text cannot be empty.")
 
+    cmd = normalize_app_command(cmd)
+
+
     # Greetings / small talk get a conversational reply — never treated as
     # an app-launch attempt. Speaking is handled by the browser (frontend
     # Web Speech Synthesis) so the response is heard immediately and
@@ -1300,13 +1341,14 @@ async def launch_endpoint(payload: CommandPayload):
                 ai_res = await asyncio.to_thread(process_command_with_ai, cmd, launch_app)
                 return ai_res
             except Exception as e:
-                log.warning(f"AI Brain failed, falling back to rule engine: {e}")
-                res = await asyncio.to_thread(launch_app, cmd)
-                results = res.get("results") or []
-                msg = "; ".join(_format_result_message(r) for r in results) or "Done."
-                if res.get("errors"):
-                    msg += f" (partial failure: {' '.join(res['errors'])})"
-                return {"success": True, "message": msg, "details": res}
+                log.warning(f"AI Brain failed: {e}")
+                return {
+                    "success": False,
+                    "intent": "error",
+                    "message": "AI is temporarily unavailable.",
+                    "spoken_text": "AI is temporarily unavailable.",
+                    "error": "AI_PROVIDER_UNAVAILABLE"
+                }
     except Exception as err:
         err_msg = str(err)
         raise HTTPException(status_code=422, detail=err_msg)
@@ -1322,11 +1364,115 @@ async def clear_context_endpoint():
         raise HTTPException(status_code=500, detail="Failed to clear context")
 
 
+@app.post("/stream")
+async def stream_endpoint(payload: CommandPayload):
+    """SSE streaming endpoint. Deterministic commands return a single event.
+    AI commands stream status/chunk/done/error events."""
+    import asyncio
+
+    cmd = payload.command.strip()
+    if not cmd:
+        raise HTTPException(status_code=400, detail="Command text cannot be empty.")
+
+    cmd = normalize_app_command(cmd)
+
+    # Chitchat - instant response, no streaming needed
+    chitchat = classify_chitchat(cmd)
+    if chitchat:
+        category, reply = chitchat
+        import json
+        async def _chitchat_stream():
+            yield f"data: {json.dumps({'type': 'done', 'response': {'success': True, 'intent': 'conversation', 'message': reply, 'spoken_text': reply, 'code_blocks': [], 'actions_taken': []}})}\n\n"
+        return StreamingResponse(_chitchat_stream(), media_type="text/event-stream")
+
+    def _is_deterministic(c: str) -> bool:
+        cl = c.lower()
+        if any(cl.startswith(v) for v in ("open ", "launch ", "run ", "start ", "play ", "take a ", "what time", "lock ")):
+            return True
+        if cl in ("shutdown", "restart", "sleep", "lock", "hibernate", "logoff", "log off", "confirm", "yes"):
+            return True
+        if "recycle bin" in cl or "trash" in cl:
+            return True
+        return False
+
+    if _is_deterministic(cmd):
+        # Deterministic: execute fast, return single SSE event
+        import json
+        async def _det_stream():
+            try:
+                _set_widget_state("executing")
+                res = await asyncio.to_thread(launch_app, cmd)
+                _set_widget_state("idle")
+                results = res.get("results") or []
+                msg = "; ".join(_format_result_message(r) for r in results) or "Done."
+                if res.get("errors"):
+                    msg += f" (partial failure: {' '.join(res['errors'])})"
+                resp = {"success": True, "intent": "tool_action", "message": msg, "spoken_text": msg, "code_blocks": [], "actions_taken": results}
+                yield f"data: {json.dumps({'type': 'done', 'response': resp})}\n\n"
+            except Exception as err:
+                _set_widget_state("error")
+                yield f"data: {json.dumps({'type': 'error', 'message': str(err)})}\n\n"
+        return StreamingResponse(_det_stream(), media_type="text/event-stream")
+
+    # AI path: stream via ai_brain
+    import json
+    async def _ai_stream():
+        try:
+            from ai_brain import stream_command_with_ai
+            _set_widget_state("thinking")
+            async for chunk_str in stream_command_with_ai(cmd):
+                chunk_str = chunk_str.strip()
+                if chunk_str:
+                    # Parse the chunk to check for tool-execution status
+                    try:
+                        chunk_data = json.loads(chunk_str)
+                        if chunk_data.get("type") == "status":
+                            status_val = chunk_data.get("status", "").lower()
+                            if "execut" in status_val or "tool" in status_val:
+                                _set_widget_state("executing")
+                            else:
+                                _set_widget_state("thinking")
+                        elif chunk_data.get("type") in ("done", "error"):
+                            _set_widget_state("idle")
+                    except Exception:
+                        pass
+                    yield f"data: {chunk_str}\n\n"
+            _set_widget_state("idle")
+        except Exception as e:
+            _set_widget_state("error")
+            err_str = str(e)
+            log.error(f"AI stream exception [{type(e).__name__}]: {err_str}")
+            # Classify the error for a user-friendly, specific message
+            if "429" in err_str or "RESOURCE_EXHAUSTED" in err_str or "quota" in err_str.lower():
+                msg = "Gemini rate limit reached. Please wait a moment and try again."
+            elif "503" in err_str or "Service Unavailable" in err_str or "unavailable" in err_str.lower():
+                msg = "Google's AI service is temporarily unavailable. Retrying automatically next time."
+            elif "401" in err_str or "403" in err_str or "API_KEY" in err_str or "authentication" in err_str.lower() or "permission" in err_str.lower():
+                msg = "Gemini API authentication error. Please check your API key in the .env file."
+            elif "timeout" in err_str.lower() or "timed out" in err_str.lower():
+                msg = "The AI request timed out. Please try again."
+            elif "model" in err_str.lower() and ("not found" in err_str.lower() or "invalid" in err_str.lower()):
+                msg = "Gemini model configuration error. Please check the model name."
+            else:
+                msg = f"AI error: {err_str[:120]}"
+            yield f"data: {json.dumps({'type': 'error', 'message': msg})}\n\n"
+
+    return StreamingResponse(_ai_stream(), media_type="text/event-stream")
+
+
+
 @app.post("/speak")
 async def speak_endpoint(payload: TTSPayload):
     text = payload.text.strip()
     if text:
+        _set_widget_state("speaking")
         speak(text)
+        # Return to idle after TTS has likely finished (rough estimate)
+        import asyncio
+        async def _reset_state():
+            await asyncio.sleep(max(1.5, len(text) / 15.0))
+            _set_widget_state("idle")
+        asyncio.create_task(_reset_state())
         return {"success": True, "text": text}
     return {"success": False, "detail": "Empty text"}
 

@@ -162,6 +162,21 @@ def test_engine_suite():
     check("'what's the date' resolves with a spoken date", main.resolve_utility_command("what's the date") is not None)
     check("garbage does not match a utility command", main.resolve_utility_command("askjdhaksjdh") is None)
 
+    print("\n=== normalize_app_command (Vosk phonetics) ===")
+    main.INSTALLED_APPS_CACHE["notepad"] = "notepad_appid"
+    main.INSTALLED_APPS_CACHE["google chrome"] = "chrome_appid"
+
+    check("'open not bad' normalizes to 'open notepad'",
+          main.normalize_app_command("open not bad").lower() == "open notepad")
+    check("'open krom' does NOT normalize to 'open google chrome' (too low confidence)",
+          main.normalize_app_command("open krom").lower() == "open krom")
+    check("'this is not bad' is unchanged (no verb)",
+          main.normalize_app_command("this is not bad") == "this is not bad")
+    check("'what is notepad?' is unchanged (no verb)",
+          main.normalize_app_command("what is notepad?") == "what is notepad?")
+    check("'open notepad' remains 'open notepad'",
+          main.normalize_app_command("open notepad").lower() == "open notepad")
+
     print(f"\n=== RESULTS: {PASS} passed, {FAIL} failed ===")
     assert FAIL == 0, f"{FAIL} tests failed"
 

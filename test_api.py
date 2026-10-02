@@ -164,6 +164,26 @@ def test_api_suite():
     r = client.get("/autostart")
     check("/autostart GET returns expected shape", r.status_code == 200 and "enabled" in r.json() and "asked" in r.json(), r.text)
 
+    print("\n=== /stream endpoint (SSE) ===")
+    # Test chitchat via stream
+    r = client.post("/stream", json={"command": "hello"})
+    check("/stream chitchat returns 200 SSE", r.status_code == 200, r.text)
+    stream_text = r.text
+    check("/stream chitchat contains 'done' event", '"type": "done"' in stream_text or '"type":"done"' in stream_text, stream_text[:200])
+
+    # Test deterministic command via stream
+    main.subprocess.Popen = lambda *a, **kw: None
+    try:
+        r = client.post("/stream", json={"command": "what time is it"})
+        check("/stream deterministic returns 200", r.status_code == 200, r.text)
+        check("/stream deterministic contains done event", '"type":"done"' in r.text or '"type": "done"' in r.text, r.text[:200])
+    finally:
+        main.subprocess.Popen = _real_popen2
+
+    # Test empty command returns 400
+    r = client.post("/stream", json={"command": ""})
+    check("/stream empty command returns 400", r.status_code == 400, r.text)
+
     print(f"\n=== RESULTS: {PASS} passed, {FAIL} failed ===")
     assert FAIL == 0, f"{FAIL} tests failed"
 

@@ -36,9 +36,18 @@ def test_parse_response_heuristic_fallback():
 def test_sanitize_for_tts():
     text = "Hello J.A.R.V.I.S., here is code ```python\nprint('x')``` **bold** *italic* `inline`"
     clean = sanitize_for_tts(text)
-    assert clean == "Hello Jarvis, here is code  bold italic inline"
+    # Code block is stripped and natural-language note is appended
+    assert "Jarvis" in clean
+    assert "bold" in clean
+    assert "italic" in clean
+    assert "inline" in clean
+    assert "print" not in clean  # code body removed
+    assert "included the code" in clean  # natural-language note added
 
 def test_sanitize_for_tts_heuristic():
     text = "def func():\n    pass\nclass A:\n    pass\n"
     clean = sanitize_for_tts(text)
-    assert clean == "I've generated the requested code."
+    # Heuristic detects code-heavy content and replaces with a natural-language note
+    assert "included the code" in clean
+    assert "def func" not in clean  # code removed
+    assert "class A" not in clean

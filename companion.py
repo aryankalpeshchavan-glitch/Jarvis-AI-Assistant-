@@ -128,7 +128,61 @@ def start_tray():
     log.info("Starting System Tray icon...")
     tray_icon.run()
 
-# ─── 5. Main Entry Point ──────────────────────────────────────────────────────
+# ─── 5. Webview Javascript Bridge ──────────────────────────────────────────────
+class JarvisApi:
+    def __init__(self):
+        try:
+            from stt_provider import VoskSpeechProvider
+            self.stt = VoskSpeechProvider()
+            self.stt.on_state_change = self._on_stt_state
+            self.stt.on_partial = self._on_stt_partial
+            self.stt.on_final = self._on_stt_final
+            self.stt.on_error = self._on_stt_error
+
+            # Lazy load model in background so it's ready quickly
+            threading.Thread(target=self._preload_stt, daemon=True).start()
+        except Exception as e:
+            log.warning(f"Could not initialize STT provider: {e}")
+            self.stt = None
+
+    def _preload_stt(self):
+        try:
+            self.stt.load_model_if_needed()
+        except Exception as e:
+            log.warning(f"STT preload failed: {e}")
+
+    def _on_stt_state(self, state_str):
+        if window:
+            window.evaluate_js(f"if(window.onSttState) window.onSttState('{state_str}')")
+
+    def _on_stt_partial(self, text):
+        import json
+        if window:
+            window.evaluate_js(f"if(window.onSttPartial) window.onSttPartial({json.dumps(text)})")
+
+    def _on_stt_final(self, text):
+        import json
+        if window:
+            window.evaluate_js(f"if(window.onSttFinal) window.onSttFinal({json.dumps(text)})")
+
+    def _on_stt_error(self, err_msg):
+        import json
+        if window:
+            window.evaluate_js(f"if(window.onSttError) window.onSttError({json.dumps(err_msg)})")
+
+    def toggle_mic(self):
+        if not self.stt:
+            if window:
+                window.evaluate_js("if(window.onSttError) window.onSttError('STT module not loaded')")
+            return
+
+        current = self.stt.state.value
+        if current in ["IDLE", "ERROR", "PROCESSING"]:
+            self.stt.start()
+        elif current in ["STARTING", "LISTENING"]:
+            self.stt.stop()
+
+# ─── 6. Main Entry Point ──────────────────────────────────────────────────────
 if __name__ == "__main__":
     # Start the backend server
     threading.Thread(target=start_fastapi, daemon=True).start()
@@ -166,11 +220,13 @@ if __name__ == "__main__":
         log.warning(f"Could not register global hotkey: {e}")
 
     # Create and start the webview companion
+    api = JarvisApi()
     window = webview.create_window(
         'J.A.R.V.I.S AI Assistant Engine',
         'http://127.0.0.1:8000',
         width=1080, height=720,
-        text_select=False
+        text_select=False,
+        js_api=api
     )
     def on_minimized():
         global is_ui_visible
@@ -225,6 +281,8 @@ if __name__ == "__main__":
 
     # Cleanup after window is destroyed (during quit)
     log.info("Cleaning up...")
+    if api.stt:
+        api.stt.shutdown()
     keyboard.unhook_all()
     if mutex:
         ctypes.windll.kernel32.ReleaseMutex(mutex)

@@ -12,3 +12,5 @@ pywebview>=4.4.1
 keyboard>=0.13.5
 pillow>=10.2.0
 psutil>=5.9.8
+vosk==0.3.45
+sounddevice==0.5.6
