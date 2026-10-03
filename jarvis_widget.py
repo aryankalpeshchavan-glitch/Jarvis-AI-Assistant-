@@ -482,9 +482,6 @@ class JarvisReactorWidget(QWidget):
         p.setRenderHint(QPainter.Antialiasing)
         p.setRenderHint(QPainter.SmoothPixmapTransform)
 
-        # Temporary background fill to debug visibility
-        p.fillRect(self.rect(), QColor(0, 0, 0, 120))
-
         cx = cy = HALF
         t  = self._t
         sp = self._speed_mul
@@ -493,13 +490,13 @@ class JarvisReactorWidget(QWidget):
         aa = self._accent_aa
 
         # ---- Outer ambient halo ----
-        or_ = 90 * self._outer_scale
+        or_ = 85 * self._outer_scale
         gh = QRadialGradient(cx, cy, or_)
-        hc = blend(QColor(0,50,90,int(45*br)), QColor(60,15,0,int(30*br)), aa)
-        if ea > 0.05: hc = blend(hc, QColor(70,0,0,40), ea)
+        hc = blend(QColor(0, 25, 45, int(40*br)), QColor(40, 15, 0, int(30*br)), aa)
+        if ea > 0.05: hc = blend(hc, QColor(50, 0, 0, 40), ea)
         gh.setColorAt(0, hc)
-        gh.setColorAt(0.5, QColor(0,15,35,int(15*br)))
-        gh.setColorAt(1, QColor(0,0,0,0))
+        gh.setColorAt(0.6, QColor(0, 10, 20, int(15*br)))
+        gh.setColorAt(1, QColor(0, 0, 0, 0))
         p.setBrush(QBrush(gh)); p.setPen(Qt.NoPen)
         p.drawEllipse(QRectF(cx-or_, cy-or_, or_*2, or_*2))
 
@@ -516,37 +513,52 @@ class JarvisReactorWidget(QWidget):
         # ---- Layer 7: Radial tick marks ----
         for i, ang in enumerate(self._tick_ang):
             if i % 4 == 0:   # major
-                ri, ro, aw, base_a = 82, 89, 1.2, 150
+                ri, ro, aw, base_a = 82, 89, 1.4, 180
             else:             # minor
-                ri, ro, aw, base_a = 84, 88, 0.6, 70
+                ri, ro, aw, base_a = 84, 88, 0.8, 80
             a_val = int(base_a * br)
-            if self._tick_lit[i]:
-                a_val = min(255, a_val + 110)
-                c = self._acc_color(a_val)
-            else:
-                c = QColor(0, 170, 210, a_val)
-            p.setPen(QPen(c, aw))
+            
             x1 = cx + ri * math.cos(ang); y1 = cy + ri * math.sin(ang)
             x2 = cx + ro * math.cos(ang); y2 = cy + ro * math.sin(ang)
+            
+            # Base dark metal mark
+            p.setPen(QPen(QColor(5, 10, 15, 220), aw + 1.0))
+            p.drawLine(QPointF(x1,y1), QPointF(x2,y2))
+            
+            # Lit overlay
+            if self._tick_lit[i]:
+                a_val = min(255, a_val + 130)
+                c = self._acc_color(a_val)
+            else:
+                c = QColor(0, 100, 140, int(a_val*0.6))
+            p.setPen(QPen(c, aw))
             p.drawLine(QPointF(x1,y1), QPointF(x2,y2))
 
         # ---- Layer 4: Mechanical segmented rings ----
         for i, (rr, th, rsp, gaps, ba, rd) in enumerate(self._rings):
             rrs = rr * (self._outer_scale if i >= 5 else 1.0)
             ao  = self._ring_a[i]
+            
             a   = int(ba * br)
-            c   = self._ring_color(a, aa, ea)
-            pen = QPen(c, th + (0.4 if gaps else 0))
-            p.setPen(pen); p.setBrush(Qt.NoBrush)
+            c_glow = self._ring_color(a, aa, ea)
+            
+            pen_base = QPen(QColor(6, 9, 14, 230), th + 1.2)
+            pen_glow = QPen(c_glow, max(0.5, th * 0.6))
+            
             if gaps == 0:
+                p.setPen(pen_base); p.setBrush(Qt.NoBrush)
+                p.drawEllipse(QRectF(cx-rrs, cy-rrs, rrs*2, rrs*2))
+                p.setPen(pen_glow)
                 p.drawEllipse(QRectF(cx-rrs, cy-rrs, rrs*2, rrs*2))
             else:
                 arc_span = 360.0 / gaps
                 draw_arc = arc_span * 0.75
                 for g in range(gaps):
                     sd = g * arc_span + math.degrees(ao)
-                    p.drawArc(QRectF(cx-rrs, cy-rrs, rrs*2, rrs*2),
-                              int(sd*16), int(draw_arc*16))
+                    p.setPen(pen_base); p.setBrush(Qt.NoBrush)
+                    p.drawArc(QRectF(cx-rrs, cy-rrs, rrs*2, rrs*2), int(sd*16), int(draw_arc*16))
+                    p.setPen(pen_glow)
+                    p.drawArc(QRectF(cx-rrs, cy-rrs, rrs*2, rrs*2), int(sd*16), int(draw_arc*16))
 
         # ---- Layer 5: Plasma particles ----
         for part in self._plasma:
@@ -605,17 +617,19 @@ class JarvisReactorWidget(QWidget):
         # ---- Layer 1: Energy nucleus ----
         nr  = self._nuc_r
         ngr = QRadialGradient(cx, cy, nr*2.5)
-        nc0 = QColor(220, 245, 255, int(255*br))
-        nc1 = self._acc_color(int(200*br))
+        nc0 = QColor(240, 252, 255, int(255*br))
+        nc1 = self._acc_color(int(220*br))
         if ea > 0.05:
-            nc0 = blend(nc0, QColor(255,80,80,255), ea*0.8)
-            nc1 = blend(nc1, QColor(255,40,40,200), ea)
+            nc0 = blend(nc0, QColor(255,100,100,255), ea*0.8)
+            nc1 = blend(nc1, QColor(255,40,40,220), ea)
         elif aa > 0.05:
-            nc1 = blend(nc1, QColor(255,185,60,200), aa*0.6)
+            nc0 = blend(nc0, QColor(255,220,150,255), aa*0.6)
+            nc1 = blend(nc1, QColor(255,185,40,220), aa*0.8)
+            
         ngr.setColorAt(0, nc0)
-        ngr.setColorAt(0.35, nc1)
-        ngr.setColorAt(0.7, QColor(0,50,90,int(110*br)))
-        ngr.setColorAt(1, QColor(0,0,0,0))
+        ngr.setColorAt(0.3, nc1)
+        ngr.setColorAt(0.7, QColor(0, 30, 60, int(110*br)))
+        ngr.setColorAt(1, QColor(0, 0, 0, 0))
         p.setBrush(QBrush(ngr)); p.setPen(Qt.NoPen)
         dr = nr*2.5
         p.drawEllipse(QRectF(cx-dr, cy-dr, dr*2, dr*2))
@@ -630,11 +644,18 @@ class JarvisReactorWidget(QWidget):
         for i in range(n6):
             ang = i*math.pi*2/n6 + math.pi/n6
             poly.append(QPointF(fac_r*math.cos(ang), fac_r*math.sin(ang)))
-        fc_a = int(155*br)
-        if ea > 0.05:   fcc = blend(QColor(0,195,235,fc_a), QColor(255,55,55,fc_a), ea)
-        elif aa > 0.05: fcc = blend(QColor(0,195,235,fc_a), QColor(255,185,60,fc_a), aa*0.7)
-        else:           fcc = QColor(0,195,235,fc_a)
-        p.setPen(QPen(fcc, 0.8)); p.setBrush(Qt.NoBrush); p.drawPolygon(poly)
+            
+        # Dark inner facet frame for contrast
+        p.setPen(QPen(QColor(4, 8, 12, int(200*br)), 1.5))
+        p.setBrush(Qt.NoBrush)
+        p.drawPolygon(poly)
+        
+        fc_a = int(180*br)
+        if ea > 0.05:   fcc = blend(QColor(0,212,255,fc_a), QColor(255,55,55,fc_a), ea)
+        elif aa > 0.05: fcc = blend(QColor(0,212,255,fc_a), QColor(255,185,40,fc_a), aa*0.7)
+        else:           fcc = QColor(0,212,255,fc_a)
+        p.setPen(QPen(fcc, 0.6)); p.drawPolygon(poly)
+        
         # Inner hexagon counter-rotating
         p.rotate(-math.degrees(t*0.7*sp))
         ir = nr*0.48
@@ -642,7 +663,7 @@ class JarvisReactorWidget(QWidget):
         for i in range(n6):
             ang = i*math.pi*2/n6
             ipoly.append(QPointF(ir*math.cos(ang), ir*math.sin(ang)))
-        p.setPen(QPen(QColor(225,248,255,int(175*br)), 0.6))
+        p.setPen(QPen(QColor(240,252,255,int(200*br)), 0.6))
         p.drawPolygon(ipoly)
         p.restore()
 
@@ -694,28 +715,28 @@ class JarvisReactorWidget(QWidget):
 
     # ---- Color helpers -------------------------------------------------------
     def _acc_color(self, a):
-        c  = QColor(0, 195, 235, a)
+        c  = QColor(0, 212, 255, a) # Cyan
         ea = self._error_aa; aa = self._accent_aa
         if ea > 0.05: return blend(c, QColor(255,40,40,a), ea)
-        if aa > 0.05: return blend(c, QColor(255,185,60,a), aa)
+        if aa > 0.05: return blend(c, QColor(255,185,40,a), aa)
         return c
 
     def _ring_color(self, a, aa, ea):
-        c = QColor(0, 195, 235, a)
+        c = QColor(0, 150, 200, a) # Controlled teal/cyan edge
         if ea > 0.05: return blend(c, QColor(255,40,40,a),  ea)
-        if aa > 0.05: return blend(c, QColor(255,185,60,a), aa)
+        if aa > 0.05: return blend(c, QColor(255,185,40,a), aa)
         return c
 
     def _acc_color_plasma(self, a, aa, ea):
-        c = QColor(0, 190, 245, a)
-        if ea > 0.05: return blend(c, QColor(255,55,55,a),  ea)
-        if aa > 0.05: return blend(c, QColor(255,185,60,a), aa)
+        c = QColor(0, 140, 255, a) # Electric blue
+        if ea > 0.05: return blend(c, QColor(255,40,40,a),  ea)
+        if aa > 0.05: return blend(c, QColor(255,185,40,a), aa)
         return c
 
     def _orb_color(self, a, aa, ea):
-        c = QColor(170, 235, 255, a)
-        if ea > 0.05: return blend(c, QColor(255,100,100,a), ea)
-        if aa > 0.05: return blend(c, QColor(255,200,80,a),  aa)
+        c = QColor(180, 245, 255, a) # Ice blue
+        if ea > 0.05: return blend(c, QColor(255,60,60,a), ea)
+        if aa > 0.05: return blend(c, QColor(255,200,60,a),  aa)
         return c
 
     # ---- Mouse events -------------------------------------------------------
