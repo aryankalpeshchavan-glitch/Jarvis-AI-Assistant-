@@ -1,20 +1,24 @@
 @echo off
 :: ═══════════════════════════════════════════════════════════════════
-::  JARVIS AI ASSISTANT — Clean Desktop Automation Startup
+::  JARVIS DESKTOP COMPANION — Silent Startup Launcher
+::  Launches ONLY the desktop companion widget (jarvis_widget.py).
+::  Uses pythonw.exe so NO console window appears.
+::  The main JARVIS UI is launched on demand when the user clicks
+::  the companion reactor widget.
 :: ═══════════════════════════════════════════════════════════════════
-TITLE Jarvis AI Engine
 
 SET JARVIS_DIR=%~dp0
-SET PYTHON_EXE=python
 
-echo.
-echo  ===========================================
-echo   J.A.R.V.I.S — DESKTOP AUTOMATION ENGINE
-echo  ===========================================
-echo.
+:: Determine the pythonw.exe path (same folder as python.exe)
+FOR /F "delims=" %%P IN ('python -c "import sys,os; print(os.path.join(os.path.dirname(sys.executable),'pythonw.exe'))" 2^>nul') DO SET PYTHONW_EXE=%%P
 
-:: ── 1. Start Jarvis Companion Lifecycle ─────────────────────────────
-echo [*] Starting Jarvis Companion (Tray, Backend, UI)...
-start "Jarvis Companion" /MIN cmd /c "%PYTHON_EXE% companion.py"
+IF NOT EXIST "%PYTHONW_EXE%" (
+    :: Fallback: try plain pythonw on PATH
+    SET PYTHONW_EXE=pythonw
+)
 
-echo [+] Jarvis initialized. It will appear in your System Tray shortly.
+:: Launch ONLY the desktop companion widget — windowlessly, no console
+start "" /B "%PYTHONW_EXE%" "%JARVIS_DIR%jarvis_widget.py"
+
+:: Exit this bat window immediately so nothing is visible
+exit

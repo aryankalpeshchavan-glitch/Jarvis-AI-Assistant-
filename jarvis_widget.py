@@ -257,21 +257,55 @@ class JarvisReactorWidget(QWidget):
     # ---- Window setup -------------------------------------------------------
     def _setup_window(self):
         self.setFixedSize(WIDGET_SIZE, WIDGET_SIZE)
+        # Qt.Tool    → no taskbar button
+        # WindowStaysOnBottomHint → stays behind normal windows (desktop-pet behavior)
+        # WindowDoesNotAcceptFocus → companion never steals focus
         self.setWindowFlags(
             Qt.FramelessWindowHint |
-            Qt.WindowStaysOnTopHint |
+            Qt.WindowStaysOnBottomHint |
+            Qt.WindowDoesNotAcceptFocus |
+            Qt.Tool |
             Qt.NoDropShadowWindowHint
         )
         self.setAttribute(Qt.WA_TranslucentBackground)
         self.setAttribute(Qt.WA_NoSystemBackground)
         self.setAttribute(Qt.WA_OpaquePaintEvent, False)
+        self.setAttribute(Qt.WA_ShowWithoutActivating)
+        self.setFocusPolicy(Qt.NoFocus)
         self.setWindowTitle("J.A.R.V.I.S")
-        
-        # Center the widget on the primary screen to ensure it is visible
+
+        # Load saved position or default to bottom-right corner
+        self._load_position()
+
+    # ---- Position persistence -----------------------------------------------
+    _CONFIG_FILE = os.path.join(os.path.dirname(__file__), "companion_config.json")
+
+    def _load_position(self):
+        try:
+            if os.path.exists(self._CONFIG_FILE):
+                with open(self._CONFIG_FILE, "r") as f:
+                    cfg = json.load(f)
+                pos = cfg.get("ReactorWidget")
+                if pos and "x" in pos and "y" in pos:
+                    self.move(pos["x"], pos["y"])
+                    return
+        except Exception:
+            pass
+        # Default: bottom-right corner of primary screen
         desk = QDesktopWidget().availableGeometry()
-        x = desk.left() + (desk.width() - WIDGET_SIZE) // 2
-        y = desk.top() + (desk.height() - WIDGET_SIZE) // 2
-        self.move(x, y)
+        self.move(desk.right() - WIDGET_SIZE - 40, desk.bottom() - WIDGET_SIZE - 60)
+
+    def _save_position(self):
+        try:
+            cfg = {}
+            if os.path.exists(self._CONFIG_FILE):
+                with open(self._CONFIG_FILE, "r") as f:
+                    cfg = json.load(f)
+            cfg["ReactorWidget"] = {"x": self.x(), "y": self.y()}
+            with open(self._CONFIG_FILE, "w") as f:
+                json.dump(cfg, f)
+        except Exception:
+            pass
 
     # ---- Tray ---------------------------------------------------------------
     def _setup_tray(self):
@@ -279,22 +313,28 @@ class JarvisReactorWidget(QWidget):
             log.warning("System tray not available.")
             return
 
-        pm = QPixmap(64, 64)
-        pm.fill(QColor(0, 0, 0, 0))
-        p = QPainter(pm)
-        p.setRenderHint(QPainter.Antialiasing)
-        cx = cy = 32
-        g = QRadialGradient(cx, cy, 28)
-        g.setColorAt(0, QColor(0, 212, 255, 255))
-        g.setColorAt(0.5, QColor(0, 100, 170, 200))
-        g.setColorAt(1, QColor(0, 30, 60, 0))
-        p.setBrush(QBrush(g)); p.setPen(Qt.NoPen)
-        p.drawEllipse(cx-26, cy-26, 52, 52)
-        p.setPen(QPen(QColor(0,200,240,180), 2)); p.setBrush(Qt.NoBrush)
-        p.drawEllipse(cx-30, cy-30, 60, 60)
-        p.end()
+        # Try loading the actual icon first, fall back to drawn icon
+        icon_path = os.path.join(os.path.dirname(__file__), "assets", "jarvis_icon.ico")
+        if os.path.exists(icon_path):
+            icon = QIcon(icon_path)
+        else:
+            pm = QPixmap(64, 64)
+            pm.fill(QColor(0, 0, 0, 0))
+            p = QPainter(pm)
+            p.setRenderHint(QPainter.Antialiasing)
+            cx = cy = 32
+            g = QRadialGradient(cx, cy, 28)
+            g.setColorAt(0, QColor(0, 212, 255, 255))
+            g.setColorAt(0.5, QColor(0, 100, 170, 200))
+            g.setColorAt(1, QColor(0, 30, 60, 0))
+            p.setBrush(QBrush(g)); p.setPen(Qt.NoPen)
+            p.drawEllipse(cx-26, cy-26, 52, 52)
+            p.setPen(QPen(QColor(0, 200, 240, 180), 2)); p.setBrush(Qt.NoBrush)
+            p.drawEllipse(cx-30, cy-30, 60, 60)
+            p.end()
+            icon = QIcon(pm)
 
-        self._tray = QSystemTrayIcon(QIcon(pm), self)
+        self._tray = QSystemTrayIcon(icon, self)
         self._tray.setToolTip("J.A.R.V.I.S")
 
         MENU_CSS = """
@@ -306,15 +346,16 @@ class JarvisReactorWidget(QWidget):
         """
         menu = QMenu(); menu.setStyleSheet(MENU_CSS)
         acts = [
-            ("Open J.A.R.V.I.S",    self._open_main_jarvis),
+            ("Open J.A.R.V.I.S",      self._open_main_jarvis),
             ("---", None),
-            ("Show Companion",       self.show),
-            ("Hide Companion",       self.hide),
+            ("Show Companion",         self._show_companion),
+            ("Hide Companion",         self.hide),
             ("---", None),
-            ("Voice",               self._toggle_voice),
-            ("Settings",            self._open_settings),
+            ("Voice",                  self._toggle_voice),
+            ("Settings",               self._open_settings),
             ("---", None),
-            ("Exit J.A.R.V.I.S",   self._quit),
+            ("Restart Companion",      self._restart_companion),
+            ("Exit J.A.R.V.I.S",      self._quit),
         ]
         for label, cb in acts:
             if label == "---":
@@ -329,9 +370,8 @@ class JarvisReactorWidget(QWidget):
         self._tray.show()
 
     def _tray_activated(self, reason):
-        if reason == QSystemTrayIcon.DoubleClick:
-            if self.isVisible(): self.hide()
-            else: self.show(); self.raise_()
+        if reason in (QSystemTrayIcon.Trigger, QSystemTrayIcon.DoubleClick):
+            self._open_main_jarvis()
 
     # ---- Timer --------------------------------------------------------------
     def _setup_timer(self):
@@ -682,15 +722,24 @@ class JarvisReactorWidget(QWidget):
     def mousePressEvent(self, event):
         if event.button() == Qt.LeftButton:
             self._drag_pos = event.globalPos() - self.frameGeometry().topLeft()
+            self._drag_moved = False
         event.accept()
 
     def mouseMoveEvent(self, event):
         if event.buttons() & Qt.LeftButton and self._drag_pos:
             self.move(event.globalPos() - self._drag_pos)
+            self._drag_moved = True
         event.accept()
 
     def mouseReleaseEvent(self, event):
-        self._drag_pos = None
+        if event.button() == Qt.LeftButton:
+            if not getattr(self, "_drag_moved", False):
+                # A tap/click without drag → open JARVIS
+                self._open_main_jarvis()
+            else:
+                self._save_position()
+            self._drag_pos = None
+            self._drag_moved = False
 
     def mouseDoubleClickEvent(self, event):
         if event.button() == Qt.LeftButton:
@@ -715,37 +764,94 @@ class JarvisReactorWidget(QWidget):
         elif chosen == ax: self._quit()
 
     # ---- Actions ------------------------------------------------------------
+    def _pythonw(self):
+        """Return the windowless Python interpreter (pythonw.exe) so spawned
+        child processes never create a visible console window."""
+        exe = sys.executable
+        pw = exe.replace("python.exe", "pythonw.exe")
+        if os.path.exists(pw):
+            return pw
+        return exe  # fallback (e.g. on macOS/Linux or unusual installs)
+
+    def _show_companion(self):
+        """Show and bring companion to front without stealing focus from other apps."""
+        self.show()
+        # Re-apply bottom-hint so it stays a desktop companion after show()
+        self.setWindowFlags(
+            Qt.FramelessWindowHint |
+            Qt.WindowStaysOnBottomHint |
+            Qt.WindowDoesNotAcceptFocus |
+            Qt.Tool |
+            Qt.NoDropShadowWindowHint
+        )
+        self.show()
+
     def _open_main_jarvis(self):
+        """Focus the existing JARVIS window or launch it if not running."""
         try:
             if HAS_REQUESTS:
                 try:
                     _req.get(f"{BACKEND_URL}/health", timeout=0.5)
-                    try: _req.post(f"{BACKEND_URL}/focus", timeout=0.5)
-                    except Exception: pass
+                    # Backend already running — ask it to bring the window forward
+                    try:
+                        _req.post(f"{BACKEND_URL}/focus", timeout=0.5)
+                    except Exception:
+                        pass
                     return
                 except Exception:
                     pass
-            subprocess.Popen([sys.executable, COMPANION_SCRIPT], close_fds=True)
+            # Backend is not running — launch companion.py windowlessly
+            subprocess.Popen(
+                [self._pythonw(), COMPANION_SCRIPT],
+                close_fds=True,
+                creationflags=0x08000000,  # CREATE_NO_WINDOW
+                cwd=str(Path(COMPANION_SCRIPT).parent),
+            )
         except Exception as e:
             log.error(f"Open JARVIS failed: {e}")
 
     def _toggle_voice(self):
         if HAS_REQUESTS:
-            try: _req.post(f"{BACKEND_URL}/toggle_mic", timeout=1.0)
-            except Exception: pass
+            try:
+                _req.post(f"{BACKEND_URL}/toggle_mic", timeout=1.0)
+            except Exception:
+                pass
 
     def _open_settings(self):
         self._open_main_jarvis()
 
+    def _restart_companion(self):
+        """Restart this companion widget: launch a fresh copy then exit self."""
+        log.info("Restarting companion widget...")
+        try:
+            subprocess.Popen(
+                [self._pythonw(), str(Path(__file__).resolve())],
+                close_fds=True,
+                creationflags=0x08000000,  # CREATE_NO_WINDOW
+                cwd=str(Path(__file__).parent),
+            )
+        except Exception as e:
+            log.error(f"Restart failed: {e}")
+            return
+        # Give the new instance a moment to acquire its mutex before we release ours
+        QTimer.singleShot(800, self._quit)
+
     def _quit(self):
+        """Exit the companion widget (and optionally the main JARVIS process)."""
         log.info("Quitting JARVIS widget...")
+        # Stop the backend poller thread cleanly
         if hasattr(self, "_poller"):
-            self._poller.stop(); self._poller.wait(800)
+            self._poller.stop()
+            self._poller.wait(800)
+        # Remove the tray icon before exiting
         if hasattr(self, "_tray"):
             self._tray.hide()
+        # Release the global keyboard hook
         if HAS_KEYBOARD:
-            try: _kb.unhook_all()
-            except Exception: pass
+            try:
+                _kb.unhook_all()
+            except Exception:
+                pass
         _release_mutex()
         QApplication.quit()
 

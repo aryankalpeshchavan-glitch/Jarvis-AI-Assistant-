@@ -182,9 +182,10 @@ def enable_autostart():
         # Packaged .exe: launch itself directly.
         launch_line = f'start "" "{sys.executable}"'
     else:
-        # Running from source: reuse startup_with_widget.bat, which starts the server
-        # and the widget the same way a manual double-click would.
-        launch_line = f'call "{BASE_DIR / "startup_with_widget.bat"}"'
+        # Running from source: use startup.bat which launches ONLY the desktop
+        # companion widget (jarvis_widget.py) silently via pythonw - no console.
+        # The main JARVIS UI opens on-demand when the user clicks the widget.
+        launch_line = f'call "{BASE_DIR / "startup.bat"}"'
 
     content = f'@echo off\r\ncd /d "{BASE_DIR}"\r\n{launch_line}\r\n'
     try:

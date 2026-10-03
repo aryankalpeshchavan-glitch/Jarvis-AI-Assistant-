@@ -40,7 +40,8 @@ def install_windows():
 
     dest = startup_folder / "Jarvis.bat"
 
-    # Write a launcher stub that sets the working dir first
+    # Write a launcher stub that sets the working dir then calls startup.bat.
+    # startup.bat uses pythonw.exe so no console window appears.
     stub = textwrap.dedent(f"""\
         @echo off
         cd /d "{PROJECT_DIR}"
@@ -48,8 +49,10 @@ def install_windows():
     """)
     dest.write_text(stub, encoding="utf-8")
 
-    log(f"Stub installed → {dest}", "OK")
-    log("Jarvis will now launch automatically on next Windows login.", "OK")
+    log(f"Stub installed \u2192 {dest}", "OK")
+    log("JARVIS companion will now launch automatically on next Windows login.", "OK")
+    log("Only the desktop companion widget will appear at startup.", "OK")
+    log("The main JARVIS UI opens when you click the widget.", "OK")
 
     # Also create a desktop shortcut via PowerShell
     _create_shortcut_windows()
@@ -82,12 +85,13 @@ def _create_shortcut_windows():
         $lnk = $ws.CreateShortcut('{shortcut}')
         $lnk.TargetPath       = '{STARTUP_BAT}'
         $lnk.WorkingDirectory = '{PROJECT_DIR}'
-        $lnk.Description      = 'Jarvis AI Assistant'
+        $lnk.WindowStyle      = 0
+        $lnk.Description      = 'Launch J.A.R.V.I.S Companion'
         $lnk.Save()
     """)
     try:
         subprocess.run(["powershell", "-Command", ps], check=True, capture_output=True)
-        log(f"Desktop shortcut created → {shortcut}", "OK")
+        log(f"Desktop shortcut created \u2192 {shortcut}", "OK")
     except Exception as e:
         log(f"Could not create desktop shortcut: {e}", "WARN")
 
@@ -187,12 +191,13 @@ def install_deps():
 # ════════════════════════════════════════════════════════════════════
 def run_now():
     if platform.system() == "Windows":
+        # Use CREATE_NO_WINDOW so no console flashes up
         subprocess.Popen(
             ["cmd", "/c", str(STARTUP_BAT)],
             cwd=str(PROJECT_DIR),
-            creationflags=subprocess.CREATE_NEW_CONSOLE,
+            creationflags=0x08000000,  # CREATE_NO_WINDOW
         )
-        log("Jarvis launched in a new console window.", "OK")
+        log("JARVIS companion launched silently (widget only).", "OK")
     else:
         sh = PROJECT_DIR / "startup.sh"
         if sh.exists():
