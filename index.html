@@ -260,6 +260,29 @@ html,body{width:100%;height:100%;background:var(--bg);overflow:hidden;user-selec
 .modal-input{width:100%;padding:7px 10px;margin-bottom:11px;background:rgba(0,180,220,.04);border:1px solid var(--panel-border);border-radius:2px;color:var(--ice);font-family:var(--font-mono);font-size:12px;outline:none;}
 .modal-input:focus{border-color:var(--cyan);}
 .modal-actions{display:flex;gap:7px;justify-content:flex-end;}
+
+/* HUD Panel (Adapted from Adewaskar JARVIS) */
+.hud-panel {
+  position: fixed; right: 22px; top: 50%; transform: translateY(-50%); width: 340px;
+  background: var(--panel); border: 1px solid var(--panel-border); border-radius: 6px;
+  padding: 16px; z-index: 20; color: var(--ice-dim); box-shadow: 0 10px 40px rgba(0,0,0,0.8);
+  backdrop-filter: blur(10px); transition: opacity 0.3s ease;
+}
+.hud-panel .hud-title {
+  font-family: var(--font-head); color: var(--cyan); font-size: 11px; letter-spacing: 2px;
+  margin-bottom: 12px; border-bottom: 1px solid rgba(0, 212, 255, 0.2); padding-bottom: 6px; text-transform: uppercase;
+}
+.hud-panel .hud-content { font-size: 10px; line-height: 1.6; max-height: 50vh; overflow-y: auto; color: #fff; }
+.hud-panel .hud-content table { width: 100%; border-collapse: collapse; margin-top: 8px; }
+.hud-panel .hud-content th, .hud-panel .hud-content td { padding: 6px; border-bottom: 1px solid rgba(255,255,255,0.1); text-align: left; }
+.hud-panel .hud-content th { color: var(--cyan); font-family: var(--font-head); font-size: 9px; }
+.hud-panel .hud-close { position: absolute; top: 12px; right: 12px; cursor: pointer; color: var(--ice-dim); transition: 0.2s; }
+.hud-panel .hud-close:hover { color: var(--red); }
+
+.hud-panel.accent-amber { border-color: rgba(255, 179, 64, 0.3); }
+.hud-panel.accent-amber .hud-title { color: var(--amber); border-bottom-color: rgba(255, 179, 64, 0.2); }
+.hud-panel.accent-red { border-color: rgba(255, 58, 58, 0.3); }
+.hud-panel.accent-red .hud-title { color: var(--red); border-bottom-color: rgba(255, 58, 58, 0.2); }
 </style>
 </head>
 <body>
@@ -885,6 +908,15 @@ async function executeCommand(cmdStr){
 
     const tot=performance.now()-t0;
     if(finalR){
+      // Render any panels requested by tools
+      if (finalR.details && finalR.details.results) {
+        for (const res of finalR.details.results) {
+          if (res && res.tool === 'display_panel' && res.success && res.data) {
+            showHudPanel(res.data.title || 'INFORMATION', res.data.html || '', res.data.accent || 'default');
+          }
+        }
+      }
+
       const msg=finalR.message||acc||'Done.';
       // spoken_text from server is already sanitized by response_parser;
       // additionally run through JS sanitizer as a safety net for URLs/markdown
@@ -1049,6 +1081,22 @@ window.onSttState=function(s){
 window.onSttPartial=function(t){cmdInput.value=t;};
 window.onSttFinal=function(t){cmdInput.value=t; if(t.trim()) executeCommand(t); cmdInput.value='';};
 window.onSttError=function(e){micBtn.classList.remove('active');setState('idle','SYSTEMS ONLINE','Microphone error');logLine(`STT error: ${e}`);};
+
+// ── HUD Panel Logic ────────────────────────────────────────────────
+let currentPanel = null;
+window.showHudPanel = function(title, html, accent) {
+  if (currentPanel) currentPanel.remove();
+  const p = document.createElement('div');
+  p.className = `hud-panel accent-${accent}`;
+  p.innerHTML = `
+    <div class="hud-close">✕</div>
+    <div class="hud-title">${title}</div>
+    <div class="hud-content">${html}</div>
+  `;
+  p.querySelector('.hud-close').onclick = () => { p.remove(); currentPanel = null; };
+  document.body.appendChild(p);
+  currentPanel = p;
+};
 
 // ── Weather ──────────────────────────────────────────────────────
 async function loadWeather(lat,lon){

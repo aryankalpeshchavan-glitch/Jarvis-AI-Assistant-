@@ -1,19 +1,37 @@
 import urllib.parse
-from typing import Dict, Any, Callable, List
+from typing import Dict, Any, Callable, List, Optional
 import main
 import psutil
+import re
 
 class RiskLevel:
     SAFE = "SAFE"
     CAUTION = "CAUTION"
     DANGEROUS = "DANGEROUS"
 
+# Adapted from adewaskar-jarvis: Auto Risk Detection
+READ_VERB = re.compile(r"^(get|list|read|search|find|query|fetch|check|describe|inspect|show|view|explain|screenshot)", re.IGNORECASE)
+EFFECTFUL_VERB = re.compile(r"(send|call|post|create|delete|remove|update|edit|write|install|launch|tap|swipe|press|type|buy|pay|charge|publish|deploy|outbound|download)", re.IGNORECASE)
+VETO_EXEMPT = {"open_url", "web_search", "open_app", "open_folder"}
+
+def detect_risk(name: str) -> str:
+    if name in VETO_EXEMPT:
+        return RiskLevel.SAFE
+    if EFFECTFUL_VERB.search(name):
+        return RiskLevel.DANGEROUS
+    if READ_VERB.search(name):
+        return RiskLevel.SAFE
+    return RiskLevel.CAUTION
+
 class ToolRegistry:
     def __init__(self):
         self.tools = {}
         self.schemas = []
 
-    def register(self, name: str, description: str, risk: str, parameters: Dict[str, Any], func: Callable):
+    def register(self, name: str, description: str, risk: Optional[str], parameters: Dict[str, Any], func: Callable):
+        if risk is None:
+            risk = detect_risk(name)
+            
         self.tools[name] = {
             "func": func,
             "risk": risk
@@ -137,8 +155,24 @@ def empty_recycle_bin():
 
 # ─── Tool Registrations ─────────────────────────────────────────────────────
 
+def display_panel(title: str, html: str, accent: str = "default"):
+    """
+    Displays a rich HTML panel on the JARVIS HUD.
+    """
+    return {"action": "display_panel", "title": title, "html": html, "accent": accent}
+
 registry.register(
-    "open_app", "Open a Windows application or game by name.", RiskLevel.SAFE,
+    "display_panel", "Display a rich HTML panel on the HUD. Use for tables, lists, or visual data.", RiskLevel.SAFE,
+    {
+        "title": {"type": "STRING", "description": "Title of the panel"},
+        "html": {"type": "STRING", "description": "HTML content to display"},
+        "accent": {"type": "STRING", "description": "One of: default, amber, violet, green, red"}
+    },
+    display_panel
+)
+
+registry.register(
+    "open_app", "Open a Windows application or game by name.", None,
     {"name": {"type": "STRING", "description": "Name of the app (e.g., 'chrome', 'calculator', 'Ghost of Tsushima')"}},
     open_app
 )
